@@ -1,0 +1,68 @@
+ # ---------------------------------------------------
+ #                Diana and Qasim's 
+ #      3D Multigroup Nodal Difussion Solver
+ # ---------------------------------------------------
+
+XS_LIBRARY "NEACRP_PWR_xs_lib.csv"
+
+# ----------------------------------------------------
+BEGIN GEOMETRY
+# Core specifications (total num. of assemblies (8x8 for now) & symetry = {4} (1/4 symetry))
+assemblies  8
+symmetry    4
+
+# Material Bounderies
+# x_planes 0.0 10.0 20.0 30.0
+# y_planes 0.0 10.0 20.0 30.0
+# z_planes 0.0 20.0 40.0
+
+x_planes 0.0 5.0 20.0
+y_planes 0.0 3.0
+z_planes 0.0 20.0 40.0
+
+# Keping x and y constant within each section of z, define z sections:
+LAYER 1       # bottom reflector, z(0, 20)
+1 1 1 1
+1 1 1 1
+1 1 1 1
+1 1 1 1
+
+LAYER 2       # fuel assembly, z(20, 40)
+3 3 3 2
+3 3 3 2
+3 3 2 2
+2 2 2 2
+
+END GEOMETRY
+
+# ----------------------------------------------------
+BEGIN BOUNDERIES
+# Boundary conditions (reflective = r; vacuum = v)
+x_min r     # always reflective (symmetry boundary)
+x_max r
+y_min r
+y_max r     # always reflective (symmetry boundary)
+z_min r
+z_max r
+
+END BOUNDERIES
+
+# ---------------------------------------------------
+BEGIN MATERIALS
+# Material IDs?
+
+axial_reflector   1
+radial_reflector  2
+fuel_21           3
+# fuel_type2        4
+# fuel_type3        5
+
+END MATERIALS
+
+# ---------------------------------------------------
+BEGIN MESH
+x_cells_per_region 5
+y_cells_per_region 3
+z_cells_per_region 4
+
+END MESH
