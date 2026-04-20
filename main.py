@@ -62,6 +62,9 @@ def read_variable(input_data, name, var_type=str):
             return int(value)
         elif var_type == np.ndarray:
             return np.array(list(map(float, value.split())))
+        else:
+            print(f"ERROR! Unsupported variable type for '{name}'")
+            exit(1)
     else:
         print(f"ERROR! '{name}' not found in input file")
         exit(1)
@@ -204,7 +207,7 @@ def build_mesh(variables, layers):
 
 
 # =============================================================================
-# MATRIX ASSEMBLY
+# MATRIX ASSEMBLY 
 # =============================================================================
 
 def cell_idx(ix, iy, iz, ny, nz):
@@ -223,44 +226,32 @@ def conductance(D_i, h_i, D_j, h_j):
     return 2.0 * D_i * D_j / (D_i * h_j + D_j * h_i)
 
 
-def assemble_system(mesh, xs_data, variables, k=1.0):
+def assemble_A(mesh, xs_data, variables):
     """
-    Assemble the linear system A * phi = b.
+    Assemble A to later solve the linear system A * phi = b.
 
       A matrix (7-stripe in 3D):
         a_{ii}   = sigma_t_{g,i} * V_i + sum of D_tilde over all 6 faces
         a_{i,j}  = -D_tilde_{face between i and j}
-
-      b vector (source Q, right-hand side):
-        b_{g,i} = sum_{g'!=g} sigma_s_{g'->g,i} * V_i * phi_{g',i}  (in-scatter)
-                + chi_g / k * sum_{g'} nu_sigma_f_{g',i} * V_i * phi_{g',i}  (fission)
-
-    Since phi is unknown, b is built using phi=1 as an initial flat flux guess.
 
     Parameters
     ----------
     mesh      : Mesh object
     xs_data   : dict {mat_id: MaterialXS}
     variables : parsed input variables dict
-    k         : multiplication factor (default 1.0 for critical reactor)
 
     Returns
     -------
     A : scipy CSR sparse matrix, shape (N*G, N*G)
-    b : numpy array, shape (N*G,)
     G : int — number of energy groups
     """
 
     nx, ny, nz = mesh.material.shape
-    N = nx * ny * nz
-    G = next(iter(xs_data.values())).G
-    size = N * G
+    N = nx * ny * nz                        # Number of cells in mesh
+    G = next(iter(xs_data.values())).G      # Energy groups
+    size = N * G                            # Total number of unknowns
 
     A = sp.lil_matrix((size, size))
-    b = np.zeros(size)
-
-    # Flat unit flux guess for computing Q
-    phi_guess = np.ones(size)
 
     bc = {
         'xmin': variables['x_min'], 'xmax': variables['x_max'],
@@ -281,8 +272,8 @@ def assemble_system(mesh, xs_data, variables, k=1.0):
 
                 i   = cell_idx(ix, iy, iz, ny, nz)
                 xs  = xs_data[int(mesh.material[ix, iy, iz])]
-                h   = {'x': mesh.dx[ix], 'y': mesh.dy[iy], 'z': mesh.dz[iz]}
-                V   = mesh.dx[ix] * mesh.dy[iy] * mesh.dz[iz]
+                h   = {'x': mesh.dx[ix], 'y': mesh.dy[iy], 'z': mesh.dz[iz]} # Delta x/y/z for cell i
+                V   = mesh.dx[ix] * mesh.dy[iy] * mesh.dz[iz]    # Volume of cell i (differential cube)
 
                 for g in range(G):
                     row = i * G + g
@@ -332,25 +323,104 @@ def assemble_system(mesh, xs_data, variables, k=1.0):
                             A[row, row] += coupling   # +D_tilde on diagonal
                             A[row, col]  -= coupling  # -D_tilde off-diagonal
 
-                    # Source vector b = Q
+    return A.tocsr()
+
+
+def compute_source(mesh, xs_data, phi, k_guess=1.0): # Source vector b = Q                    
+    """
+    Compute the source term, b.
+
+      b vector (source Q, right-hand side):
+        b_{g,i} = sum_{g'!=g} sigma_s_{g'->g,i} * V_i * phi_{g',i}  (in-scatter)
+                + chi_g / k * sum_{g'} nu_sigma_f_{g',i} * V_i * phi_{g',i}  (fission)
+
+    Since phi is unknown, b is built using phi=1 as an initial flat flux guess.
+    
+    To solve fine-mesh finite difference eqns, we use power iteration.
+        - b depends on phi, so it is updated for each iteration.
+
+    Parameters
+    ----------
+    mesh      : Mesh object
+    xs_data   : dict {mat_id: MaterialXS}
+    variables : parsed input variables dict
+    k         : multiplication factor (default 1.0 for critical reactor)
+
+    Returns
+    -------
+    b : numpy array, shape (N*G,)
+    F : scalar. Fission source integrated over all cells (volume), used for updating k in power iteration
+    """
+
+    nx, ny, nz = mesh.material.shape
+    N = nx * ny * nz                        # Number of cells in mesh
+    G = next(iter(xs_data.values())).G      # Energy groups
+    size = N * G                            # Total number of unknowns
+
+    b = np.zeros(size)
+    F = 0.0
+    k = k_guess
+
+    for ix in range(nx):
+        for iy in range(ny):
+            for iz in range(nz):
+
+                i   = cell_idx(ix, iy, iz, ny, nz)
+                xs  = xs_data[int(mesh.material[ix, iy, iz])]
+                h   = {'x': mesh.dx[ix], 'y': mesh.dy[iy], 'z': mesh.dz[iz]} # Delta x/y/z for cell i
+                V   = mesh.dx[ix] * mesh.dy[iy] * mesh.dz[iz]    # Volume of cell i (differential cube)
+
+                for group in range(G):
+                    row_idx = i * G + group
                     # In-scatter from other groups g' -> g
                     for gp in range(G):
-                        if gp != g:
-                            b[row] += xs.sigma_s[gp, g] * V * phi_guess[i * G + gp]
+                        if gp != group:
+                            b[row_idx] += xs.sigma_s[gp, group] * V * phi[i * G + gp]
 
                     # Fission: chi_g/k * sum_{g'} nu_sigma_f_{g'} * phi_{g'}
                     for gp in range(G):
-                        b[row] += (xs.chi[g] / k) * xs.nu_sigma_f[gp] * V * phi_guess[i * G + gp]
+                        b[row_idx] += (xs.chi[group] / k) * xs.nu_sigma_f[gp] * V * phi[i * G + gp]
+                        F += xs.nu_sigma_f[gp] * V * phi[i * G + gp] # accumulate total fission source over all cells
+                    
+    return b, F
 
-    return A.tocsr(), b, G
 
 # =============================================================================
-# Solve 3D fine mesh finite difference equations
+# Solve 3D fine mesh finite difference equations with power iteration for A* phi = b
 # =============================================================================
 
-# def power_iteration(A, mesh, xs_data, variables, 
-#                     k_tol=1e-6, flux_tol=1e-5, max_iter=500):
-    
+def power_iteration(A, mesh, xs_data, phi_guess, k_guess=1.0, k_tol=1e-6, max_iter=500):
+    # Initial guess
+    phi_l = phi_guess   # phi_{l}
+    k_l = k_guess       # k_{l}
+
+    # Iteration loop
+    for i in range(max_iter):
+        # Update source term b with new flux guess
+        b, F_l = compute_source(mesh, xs_data, phi_l, k_l)
+
+        # Solve A * phi_new = b
+        phi_l_1 = sp.linalg.spsolve(A, b) # phi_{l+1}
+
+        # Update k estimate
+        _, F_l_1 = compute_source(mesh, xs_data, phi_l_1, k_l) # F_{l+1}
+        k_l_1 = k_l * (F_l_1 / F_l) # k = n's from fission {l+1} / n's from fission {l}
+
+       # Normalize flux
+        #phi_new /= np.linalg.norm(phi_new)
+        phi_l_1 /= phi_l_1.max()
+
+        # Check convergence
+        if abs(k_l_1 - k_l) / abs(k_l) < k_tol:
+            print(f"Power iteration converged in {i+1} iterations: k={k_l_1:.6f}")
+            break
+
+        phi_l = phi_l_1
+        k_l = k_l_1
+
+        print(f"  Iter {i+1}: k={k_l_1:.6f}")
+    return phi_l_1, k_l_1
+
 # =============================================================================
 # Include a 1-node NEM kernel
 # =============================================================================
@@ -359,10 +429,11 @@ def assemble_system(mesh, xs_data, variables, k=1.0):
 # =============================================================================
 # MAIN
 # =============================================================================
-
 if __name__ == "__main__":
-
-    # Parse command line
+    
+    #--------------------------------------------------------------------------
+    # Parse input and build mesh
+    #--------------------------------------------------------------------------
     parser = argparse.ArgumentParser()
     parser.add_argument("input_file", type=str)
     args = parser.parse_args()
@@ -371,33 +442,35 @@ if __name__ == "__main__":
     # Read and clean input file
     with open(args.input_file, 'r') as f:
         raw = f.read()
-    print(f"Input data:\n{raw}")
+    #print(f"Input data:\n{raw}")
     input_data = clean_txt(raw)
 
     # Parse input
     variables = parse_input(input_data)
-    print("----")
-    print(variables)
+    print("----------")
+    print(f"Input variables: {variables}")
 
     layers = parse_layers(input_data, variables)
-    print("----")
-    print(f"Layers shape (nx_regions, ny_regions, nz_regions): {layers.shape}")
+    print("----------")
+    print(f"Layers shape (nx_regions, ny_regions, nz_regions): {layers.shape}") # number of regions in each direction (x,y,z)
 
     mat_names = parse_materials(input_data)
-    print("----")
+    print("----------")
     print(f"Materials: {mat_names}")
 
     # Build mesh
     mesh = build_mesh(variables, layers)
-    print("----")
-    print(f"Fine mesh shape (nx, ny, nz): {mesh.material.shape}")
-    print(f"dx: {mesh.dx}")
-    print(f"dy: {mesh.dy}")
-    print(f"dz: {mesh.dz}")
-    print(f"First layer (z=0):\n{mesh.material[:,:,0]}")
-    print(f"Second layer (z=4):\n{mesh.material[:,:,4]}")
+    print("----------")
+    print(f"Fine mesh shape (nx, ny, nz): {mesh.material.shape}") # i.e. number of cells (n) in each region (x,y,z)
+    # print(f"dx: {mesh.dx}")
+    # print(f"dy: {mesh.dy}")
+    # print(f"dz: {mesh.dz}")
+    # print(f"First layer (z=0):\n{mesh.material[:,:,0]}")
+    # print(f"Second layer (z=4):\n{mesh.material[:,:,-1]}")
 
-    # ── Load XS data  
+    #--------------------------------------------------------------------------
+    # Load XS data  
+    #--------------------------------------------------------------------------
     xs_library_by_name = load_xs_library(variables["XS_LIBRARY"])
     # mat_names = {1: 'axial_reflector', 2: 'radial_reflector', 3: 'fuel_type1', ...}
     xs_data = {}
@@ -409,29 +482,61 @@ if __name__ == "__main__":
         xs = xs_library_by_name[key]
         xs.mat_id = mat_id
         xs_data[mat_id] = xs
-    G_groups = next(iter(xs_data.values())).G
-    print("----")
-    print(f"Loaded XS for {len(xs_data)} materials, {G_groups} groups")
+    G = next(iter(xs_data.values())).G # Number of energy groups
+    print("----------")
+    print(f"Loaded XS for {len(xs_data)} materials, {G} groups")
+    print("----------")
 
-    #  Assemble A and b
-    print("Assembling FD system A*phi = b ...")
-    A, b, G = assemble_system(mesh, xs_data, variables, k=1.0)
+    #--------------------------------------------------------------------------
+    print("Assembling Finite Difference system A*phi = b ...")
+    #--------------------------------------------------------------------------
 
+    #--------------------------------------------------------------------------
+    # Assemble matrix A
+    #--------------------------------------------------------------------------
     nx, ny, nz = mesh.material.shape
-    N = nx * ny * nz
-    print(f"  System size: {N} cells x {G} groups = {N*G} unknowns")
-    print(f"  A: shape={A.shape}, nonzeros={A.nnz}")
-    print(f"  b: shape={b.shape}, nonzero entries={np.count_nonzero(b)}")
+    N = nx * ny * nz        # Number of cells in mesh
+    size = N * G
 
-    # diagonal of A should be strictly positive
-    if np.any(A.diagonal() <= 0):
-        print("WARNING: A has non-positive diagonal entries — check XS or BC setup")
-    else:
-        print("Diagonal of A is all positive (good)")
+    A = assemble_A(mesh, xs_data, variables)
+
+    print(f"  System size: {N} cells x {G} groups = {N*G} unknowns")
+    print(f"\n  A: shape={A.shape}, nonzeros={A.nnz}")    
 
     # For small problems, dense view for inspection
     if N * G <= 100:
         print("\nA (dense view):")
         print(A.toarray().round(4))
+
+    # diagonal of A should be strictly positive
+    if np.any(A.diagonal() <= 0):
+        print("WARNING: A has non-positive diagonal entries — check XS or BC setup")
+    else:
+        print("  Diagonal of A is all positive (good)")
+
+    #--------------------------------------------------------------------------
+    # Compute source vector b
+    #--------------------------------------------------------------------------
+    # Flat unit flux guess for computing Q -- TODO: Make sure flat flux is correct
+    phi_guess = np.ones(size) 
+
+    # if only forming matrix:
+    b, F = compute_source(mesh=mesh, xs_data=xs_data, phi=phi_guess)
+
+    print(f"\n  b: shape={b.shape}, nonzero entries={np.count_nonzero(b)}")
+    
+    if N * G <= 100:     # For small problems, dense view for inspection
         print("\nb:")
         print(b.round(6))
+
+    #--------------------------------------------------------------------------
+    # Solve 3D fine mesh finite difference equations with power iteration
+    #--------------------------------------------------------------------------
+    print("\nSolving A*phi = b with power iteration...")
+
+    phi, k = power_iteration(A=A, mesh=mesh, xs_data=xs_data, phi_guess=phi_guess)
+
+    # print(f"  phi: shape={phi.shape}, nonzero entries={np.count_nonzero(phi)}")
+    # print(f"  k_eff={k:.6f}")
+
+    # if solving NEM:

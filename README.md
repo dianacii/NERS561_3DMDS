@@ -31,10 +31,14 @@ Then your initial program should
 
 # HW 5
 From your existing code, extend the capability to
-• include a 1-node NEM kernel
-• solve the 3D fine mesh finite difference equations
-• Process (and use) few-group cross section data
+- include a 1-node NEM kernel
+- solve the 3D fine mesh finite difference equations
+- Process (and use) few-group cross section data
 
 For these capabilities think about how to verify their correctness and produce that evidence.
-• To verify yours solver, I suggest doing some legacy diffusion benchmarks. (NEARCP, IAEA, or the
+- To verify yours solver, I suggest doing some legacy diffusion benchmarks. (NEARCP, IAEA, or the
 Argonne Benchmark Handbook)
+
+Expeted results (I think?):
+- The ANL Benchmark Handbook, problem 11 or problem 3: https://www.osti.gov/servlets/purl/12030251
+![alt text](image.png)

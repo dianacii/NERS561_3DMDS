@@ -7,15 +7,13 @@ XS_LIBRARY "ANLBH_p11_xs_lib.csv"
 
 # ----------------------------------------------------
 BEGIN GEOMETRY
-# Core specifications (total num. of assemblies (16x16, but includying 1/2) & symetry = {4} (1/4 symetry))
+# Core specifications (total num. of assemblies (16x16, but we're includying 1/2 on symetry axis) 
+# & symetry = {4} (1/4 symetry))
+
 assemblies  16
 symmetry    4
 
 # Material Bounderies
-# x_planes 0.0 5.0 20.0
-# y_planes 0.0 3.0
-# z_planes 0.0 20.0 40.0
-
 x_planes 0.0 10.0 30.0  50.0  70.0 90.0 110.0 130.0 150.0 170.0
 y_planes 0.0 10.0 30.0  50.0  70.0 90.0 110.0 130.0 150.0 170.0
 z_planes 0.0 20.0 280.0 360.0 380.0
@@ -93,13 +91,14 @@ END MATERIALS
 
 # ---------------------------------------------------
 BEGIN MESH
-#x_cells_per_region 20
-#y_cells_per_region 20
-#z_cells_per_region 20
+# for meshpoints 9x9x10
+# x_cells_per_region 1
+# y_cells_per_region 1
+# z_cells_per_region 3
 
-# for now, try with 1 so it runs faster, 20 is too many
-x_cells_per_region 1
-y_cells_per_region 1
-z_cells_per_region 1
+# for meshpoints 17x17x19
+x_cells_per_region 2
+y_cells_per_region 2
+z_cells_per_region 5
 
 END MESH
