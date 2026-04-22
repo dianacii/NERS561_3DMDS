@@ -34,7 +34,7 @@ from,to,sigma_s
 reflector
 group,D,sigma_a,nu_sigma_f,chi
 1,2.0,0.0,0.0,0.0
-2,0.3,0.1,0.0,0.0
+2,0.3,0.01,0.0,0.0
 SCATTER
 from,to,sigma_s
 1,1,0.0

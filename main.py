@@ -306,6 +306,9 @@ def assemble_A(mesh, xs_data, variables):
                             if bc[face] == 'v':
                                 # Vacuum BC: adds D/(0.5*h) * A_face to diagonal
                                 A[row, row] += (D_i / (0.5 * h[direction])) * A_face
+                                # Benchmark-specified BC
+                                #coeff = 0.4692 / (1.0 + (0.4692 * h[direction]) / (2.0 * D_i))
+                                #A[row, row] += coeff * A_face
                                 # Reflective BC: zero net current, no contribution
 
                         else:
@@ -380,7 +383,10 @@ def compute_source(mesh, xs_data, phi, k_guess=1.0): # Source vector b = Q
                     # Fission: chi_g/k * sum_{g'} nu_sigma_f_{g'} * phi_{g'}
                     for gp in range(G):
                         b[row_idx] += (xs.chi[group] / k) * xs.nu_sigma_f[gp] * V * phi[i * G + gp]
-                        F += xs.nu_sigma_f[gp] * V * phi[i * G + gp] # accumulate total fission source over all cells
+
+                for gp in range(G):
+                    # Accumulate total fission source once per cell, outside group loop
+                    F += xs.nu_sigma_f[gp] * V * phi[i * G + gp]
                     
     return b, F
 
@@ -461,12 +467,7 @@ if __name__ == "__main__":
     # Build mesh
     mesh = build_mesh(variables, layers)
     print("----------")
-    print(f"Fine mesh shape (nx, ny, nz): {mesh.material.shape}") # i.e. number of cells (n) in each region (x,y,z)
-    # print(f"dx: {mesh.dx}")
-    # print(f"dy: {mesh.dy}")
-    # print(f"dz: {mesh.dz}")
-    # print(f"First layer (z=0):\n{mesh.material[:,:,0]}")
-    # print(f"Second layer (z=4):\n{mesh.material[:,:,-1]}")
+    print(f"Fine mesh shape (nx, ny, nz): {mesh.material.shape}")
 
     #--------------------------------------------------------------------------
     # Load XS data  
@@ -486,6 +487,27 @@ if __name__ == "__main__":
     print("----------")
     print(f"Loaded XS for {len(xs_data)} materials, {G} groups")
     print("----------")
+
+    print("XS verification:")
+    for mat_id, xs in xs_data.items():
+        print(f"  mat {mat_id}: sigma_t = {xs.sigma_t}")
+        print(f"           D = {xs.D}")
+
+    # Diagnostic: count cells by material
+    from collections import Counter
+    mat_counts = Counter(mesh.material.flatten())
+    print("Cell counts by material ID:")
+    for mat_id, count in sorted(mat_counts.items()):
+        xs = xs_data[mat_id]
+        print(f"  mat {mat_id}: {count} cells, "
+              f"D1={xs.D[0]}, sigma_a2={xs.sigma_a[1]}, "
+              f"nu_sigma_f2={xs.nu_sigma_f[1]}")
+
+    print(f"dx range: {mesh.dx.min():.2f} to {mesh.dx.max():.2f}")
+    print(f"dy range: {mesh.dy.min():.2f} to {mesh.dy.max():.2f}")
+    print(f"dz range: {mesh.dz.min():.2f} to {mesh.dz.max():.2f}")
+    print(f"Total volume: {sum(mesh.dx)*sum(mesh.dy)*sum(mesh.dz):.1f} cm^3")
+    print(f"Expected volume: 170*170*380 = {170*170*380:.1f} cm^3")
 
     #--------------------------------------------------------------------------
     print("Assembling Finite Difference system A*phi = b ...")
@@ -524,7 +546,13 @@ if __name__ == "__main__":
     b, F = compute_source(mesh=mesh, xs_data=xs_data, phi=phi_guess)
 
     print(f"\n  b: shape={b.shape}, nonzero entries={np.count_nonzero(b)}")
-    
+
+
+    for idx in range(mesh.material.size):
+        if mesh.material.flat[idx] == 1:
+            print(f"First fuel_1 cell source: b[{2*idx}]={b[2*idx]:.6f} (group1), b[{2*idx+1}]={b[2*idx+1]:.6f} (group2)")
+            break
+
     if N * G <= 100:     # For small problems, dense view for inspection
         print("\nb:")
         print(b.round(6))
