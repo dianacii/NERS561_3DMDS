@@ -298,7 +298,7 @@ def update_flux(mesh, xs_data, f0, jo, ji, Q):
 
 
 # =============================================================================
-# Inner iteration sweep (Inner subroutine in Fortran)
+# Inner iteration sweep
 # =============================================================================
 
 def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner=2):
@@ -429,7 +429,7 @@ def nem_power_iteration(mesh, xs_data, variables,
         f0_old = f0.copy()
         fs, F_old = compute_fission_source(mesh, xs_data, f0)
 
-        # Loop over groups (from Outer subroutine)
+        # Loop over groups
         for g in range(G):
             # Compute total source Q for this group
             Q = compute_source(mesh, xs_data, f0, fs, keff)
