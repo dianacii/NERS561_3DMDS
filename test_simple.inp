@@ -1,0 +1,58 @@
+XS_LIBRARY "ANLBH_p11_xs_lib.csv"
+BEGIN GEOMETRY
+assemblies 1
+symmetry 1
+x_planes 0.0 20.0 40.0 60.0 80.0 100.0
+y_planes 0.0 20.0 40.0 60.0 80.0 100.0
+z_planes 0.0 20.0 40.0 60.0 80.0 100.0
+LAYER 1
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+LAYER 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+LAYER 3
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+LAYER 4
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+LAYER 5
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+2 2 2 2 2
+END GEOMETRY
+BEGIN BOUNDERIES
+x_min v
+x_max v
+y_min v
+y_max v
+z_min v
+z_max v
+END BOUNDERIES
+BEGIN MATERIALS
+fuel_1 1
+fuel_2 2
+fuel_2_plus_rod 3
+reflector 4
+reflector_plus_rod 5
+END MATERIALS
+BEGIN MESH
+x_cells_per_region 1
+y_cells_per_region 1
+z_cells_per_region 1
+END MESH
