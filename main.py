@@ -2,8 +2,12 @@ import argparse
 from dataclasses import dataclass
 import numpy as np
 import scipy.sparse as sp
-import re, io
+import re, io, os
 import pandas as pd
+import json
+import time
+from pathlib import Path
+
 
 # =============================================================================
 # DATA STRUCTURES
@@ -370,7 +374,6 @@ def compute_source(mesh, xs_data, phi, k_guess=1.0): # Source vector b = Q
 
                 i   = cell_idx(ix, iy, iz, ny, nz)
                 xs  = xs_data[int(mesh.material[ix, iy, iz])]
-                h   = {'x': mesh.dx[ix], 'y': mesh.dy[iy], 'z': mesh.dz[iz]} # Delta x/y/z for cell i
                 V   = mesh.dx[ix] * mesh.dy[iy] * mesh.dz[iz]    # Volume of cell i (differential cube)
 
                 for group in range(G):
@@ -392,13 +395,21 @@ def compute_source(mesh, xs_data, phi, k_guess=1.0): # Source vector b = Q
 
 
 # =============================================================================
-# Solve 3D fine mesh finite difference equations with power iteration for A* phi = b
+# Finite Difference Method, solved with power iteration
 # =============================================================================
 
-def power_iteration(A, mesh, xs_data, phi_guess, k_guess=1.0, k_tol=1e-6, max_iter=500):
+def power_iteration(A, mesh, xs_data, phi_guess, 
+                    k_guess=1.0, k_tol=1e-6, max_iter=500):
+    """
+    Power iteration to solve A * phi = b, where b depends on phi through the fission source term.
+    - Start with an initial guess for phi and k.
+    - A = M, the migration matrix (removal and diffusion)
+    - b = Q, the source term includying fission and inscattering from other groups.
+    """
     # Initial guess
     phi_l = phi_guess   # phi_{l}
     k_l = k_guess       # k_{l}
+    k_history = [k_l]   # to keep track of convergence history
 
     # Iteration loop
     for i in range(max_iter):
@@ -410,11 +421,13 @@ def power_iteration(A, mesh, xs_data, phi_guess, k_guess=1.0, k_tol=1e-6, max_it
 
         # Update k estimate
         _, F_l_1 = compute_source(mesh, xs_data, phi_l_1, k_l) # F_{l+1}
-        k_l_1 = k_l * (F_l_1 / F_l) # k = n's from fission {l+1} / n's from fission {l}
+        k_l_1 = k_l * (F_l_1 / F_l) # k = n's from fission{l+1} / n's from fission{l}
 
-       # Normalize flux
+        # Normalize flux
         #phi_new /= np.linalg.norm(phi_new)
         phi_l_1 /= phi_l_1.max()
+        
+        print(f"  Iter {i+1}: k={k_l_1:.6f}")
 
         # Check convergence
         if abs(k_l_1 - k_l) / abs(k_l) < k_tol:
@@ -423,14 +436,51 @@ def power_iteration(A, mesh, xs_data, phi_guess, k_guess=1.0, k_tol=1e-6, max_it
 
         phi_l = phi_l_1
         k_l = k_l_1
+        k_history.append(k_l)
 
-        print(f"  Iter {i+1}: k={k_l_1:.6f}")
-    return phi_l_1, k_l_1
+    return phi_l_1, k_l_1, k_history
 
 # =============================================================================
-# Include a 1-node NEM kernel
+# Nodal Expansion Method w/ 1-Kernel 
 # =============================================================================
 
+
+# =============================================================================
+# Results
+# =============================================================================
+
+def compute_power_density(mesh, xs_data, phi, k_guess=1.0):
+    # normalize phi by F/V_core to get power density in each cell
+    _, F = compute_source(mesh=mesh, xs_data=xs_data, phi=phi, k_guess=k_guess)
+    V_core = sum(mesh.dx) * sum(mesh.dy) * sum(mesh.dz)
+    phi_norm = phi / (F/V_core)
+
+    nx, ny, nz = mesh.material.shape
+    N = nx * ny * nz                        # Number of cells in mesh
+    G = next(iter(xs_data.values())).G      # Energy groups
+
+    F_matrix = np.zeros(N)
+    for ix in range(nx):
+        for iy in range(ny):
+            for iz in range(nz):
+
+                i   = cell_idx(ix, iy, iz, ny, nz)
+                xs  = xs_data[int(mesh.material[ix, iy, iz])]
+                V_cell   = mesh.dx[ix] * mesh.dy[iy] * mesh.dz[iz]  # Volume of cell i (differential cube)
+                    
+                # Fission: chi_g/k * sum_{g'} nu_sigma_f_{g'} * phi_{g'}
+                for gp in range(G):
+                    F_matrix[i] += xs.nu_sigma_f[gp] * V_cell * phi_norm[i * G + gp]
+
+    # Power density per cell:
+    p_i = F_matrix
+    fuel_mask = p_i > 0 # avoid dividing by zero for non-fuel cells when computing peak-to-average
+    peak_to_avg = p_i.max() / p_i[fuel_mask].mean()
+   
+    print(f"Max peak power density: {p_i.max()} W/cm^3")
+    print(f"Peak-to-average power density: {peak_to_avg:.2f}")
+
+    return peak_to_avg, p_i.max()
 
 # =============================================================================
 # MAIN
@@ -558,13 +608,50 @@ if __name__ == "__main__":
         print(b.round(6))
 
     #--------------------------------------------------------------------------
-    # Solve 3D fine mesh finite difference equations with power iteration
+    # Solve diffusion equations
     #--------------------------------------------------------------------------
+    # If solving FDM:
     print("\nSolving A*phi = b with power iteration...")
+    
+    start = time.time() # to count time it takes to run power iteration
 
-    phi, k = power_iteration(A=A, mesh=mesh, xs_data=xs_data, phi_guess=phi_guess)
+    phi, k, k_history = power_iteration(A=A, mesh=mesh, xs_data=xs_data, phi_guess=phi_guess, 
+                             k_guess=1.0, k_tol=1e-6, max_iter=500)
 
-    # print(f"  phi: shape={phi.shape}, nonzero entries={np.count_nonzero(phi)}")
-    # print(f"  k_eff={k:.6f}")
+    peak_to_avg, max_power_density = compute_power_density(mesh=mesh, xs_data=xs_data, phi=phi)
+
+    run_time = time.time() - start # in seconds
+
+    print(f"Total runtime: {run_time:.2f} seconds")
 
     # if solving NEM:
+
+
+
+    #--------------------------------------------------------------------------
+    # Write out results
+    #--------------------------------------------------------------------------
+
+    # write out phi, k and peak_to_average and max power density to a text file
+    input_path = Path(args.input_file)
+    out_path = Path("outputs") / Path(args.input_file).stem
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    # Saves phi and k_history as numpy arrays in their own files
+    np.save(out_path / "phi.npy", phi)
+    np.save(out_path / "k_history.npy", k_history)
+
+    # copy intput file to output directory for record keeping
+    with open(out_path / input_path.name, 'w') as f:
+        f.write(raw)
+
+    with open(out_path / "results.json", 'w') as f:
+        json.dump({
+            "file_name": input_path.stem,
+            "mesh_shape": list(mesh.material.shape),
+            "num_iterations": len(k_history),
+            "k": k,
+            "peak_to_avg": peak_to_avg,
+            "max_power_density": max_power_density,
+            "run_time": run_time
+        }, f, indent=4)

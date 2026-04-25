@@ -1,0 +1,13 @@
+{
+    "file_name": "ANLB_36x36x38",
+    "mesh_shape": [
+        36,
+        36,
+        38
+    ],
+    "num_iterations": 351,
+    "k": 1.02707511096487,
+    "peak_to_avg": 2.6990348407969527,
+    "max_power_density": 893.2256696489912,
+    "run_time": 9815.40177989006
+}

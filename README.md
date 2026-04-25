@@ -41,4 +41,5 @@ Argonne Benchmark Handbook)
 
 Expeted results (I think?):
 - The ANL Benchmark Handbook, problem 11 or problem 3: https://www.osti.gov/servlets/purl/12030251
-![alt text](image.png)
+
+![alt text](report_images/ANLB_p11_results.png)

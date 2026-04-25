@@ -3,7 +3,7 @@
  #      3D Multigroup Nodal Diffusion Solver
  # ---------------------------------------------------
 
-XS_LIBRARY "ANLBH_p11_xs_lib.csv"
+XS_LIBRARY "ANLB_p11/ANLBH_p11_xs_lib.csv"
 
 # ----------------------------------------------------
 BEGIN GEOMETRY
@@ -271,18 +271,10 @@ END MATERIALS
 # ---------------------------------------------------
 BEGIN MESH
 # 1 cell per region: 9x9x19 mesh
-# x_cells_per_region 1
-# y_cells_per_region 1
-# z_cells_per_region 1
 
-# 2 cells per region, 1 for z: 18x18x19 mesh
+#2 cells in x/y, 1 cell in z: 18x18x19 mesh
 x_cells_per_region 2
 y_cells_per_region 2
 z_cells_per_region 1
-
-# Fine-mesh: 2 cells per region, 1 for z: 36x36x38 mesh
-# x_cells_per_region 4
-# y_cells_per_region 4
-# z_cells_per_region 2
 
 END MESH
