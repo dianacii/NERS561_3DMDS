@@ -246,7 +246,7 @@ def compute_source(mesh, xs_data, f0, fs, keff):
 
 
 # =============================================================================
-# Update flux from currents (Flux2 in Fortran)
+# Update flux from currents
 # =============================================================================
 
 def update_flux(mesh, xs_data, f0, jo, ji, Q):
