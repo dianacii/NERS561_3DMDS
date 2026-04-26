@@ -421,6 +421,9 @@ def power_iteration(A, mesh, xs_data, phi_guess,
         # Update source term b with new flux guess
         b, F_l = compute_source(mesh, xs_data, phi_l, k_l)
 
+        # # Solve A * phi_new = b
+        # phi_l_1 = sp.linalg.spsolve(A, b) # phi_{l+1} # leaking memory for 72x72x78 mesh.
+
         # Solve A * phi_new = b with GMRES + ILU preconditioner
         phi_l_1, info = gmres(A, b, M=M, rtol=1e-8)
         if info != 0:
