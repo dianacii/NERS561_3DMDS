@@ -1,5 +1,5 @@
 # NERS561_3DMDS
-NERS561 core design final project: implementataion of a 3D Multigroup Nodal Difussion Solver
+NERS561 core design final project: implementataion of a 3D Multigroup Nodal Diffusion Solver
 
 # OVERVIEW:
 3D Multigroup Nodal Diffusion Solver  -- {simulate3}
