@@ -304,22 +304,24 @@ def update_flux(mesh, xs_data, f0, jo, ji, Q):
 def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner=2):
     """
     Inner iteration: update Jo using response matrix, then update flux.
-
-    Forward sweep (k=1..nk) then backward sweep (k=nk..1).
-
+ 
+    Uses red-black (checkerboard) ordering:
+        - Color each node by (ix+iy+iz) % 2
+        - Update all red nodes (color=0) first, then all black nodes (color=1)
+        - Red nodes only have black neighbors (unchanged this pass) so all
+          incoming currents are from the previous sweep, no ordering dependency
+        - Then black nodes use freshly updated red neighbors
+ 
     jo = R @ ji + P * Q0
-
-    bc dict: {face: bc_type} where face is 'xlo','xhi','ylo','yhi','zlo','zhi'
+ 
+    bc dict: {face: bc_type}
              bc_type: 1=vacuum, 2=reflective
     """
     nx, ny, nz = mesh.material.shape
     G = next(iter(xs_data.values())).G
-    N = nx*ny*nz
-
-    # Build neighbor lookup
+ 
+    # Neighbor lookup: returns (neighbor_k, neighbor_face, bc_type)
     def neighbor(ix, iy, iz, face):
-        """Return (neighbor_k, neighbor_face, bc_type) for a given face."""
-        # face: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-
         if face == 0:   # X+
             if ix == nx-1: return None, None, bc['xhi']
             return cell_idx(ix+1,iy,iz,ny,nz), 1, None
@@ -338,46 +340,33 @@ def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner=2):
         if face == 5:   # Z-
             if iz == 0:    return None, None, bc['zlo']
             return cell_idx(ix,iy,iz-1,ny,nz), 4, None
-
+ 
     for _ in range(n_inner):
-        # Forward sweep
-        for ix in range(nx):
-            for iy in range(ny):
-                for iz in range(nz):
-                    k = cell_idx(ix,iy,iz,ny,nz)
-                    for g in range(G):
-                        # Get incoming currents from all 6 neighbors
-                        for face in range(6):
-                            nk, nf, bc_t = neighbor(ix,iy,iz, face)
-                            if nk is None:
-                                ji[k,g,face] = 0.0 if bc_t==1 else jo[k,g,face]
-                            else:
-                                ji[k,g,face] = jo[nk,g,nf]
-
-                        # Response matrix: jo = R @ ji + P * Q0
-                        jo[k,g,:] = R[k,g] @ ji[k,g,:] + P[k,g] * Q[k,g]
-
-        # Update flux after forward sweep
+        # Red-black sweep: color=0 (red) then color=1 (black)
+        for color in [0, 1]:
+            for ix in range(nx):
+                for iy in range(ny):
+                    for iz in range(nz):
+                        if (ix + iy + iz) % 2 != color:
+                            continue
+ 
+                        k = cell_idx(ix,iy,iz,ny,nz)
+                        for g in range(G):
+                            # Get incoming currents from neighbors or BC
+                            for face in range(6):
+                                nk, nf, bc_t = neighbor(ix,iy,iz,face)
+                                if nk is None:
+                                    ji[k,g,face] = 0.0 if bc_t==1 else jo[k,g,face]
+                                else:
+                                    ji[k,g,face] = jo[nk,g,nf]
+ 
+                            # Response matrix multiply: jo = R @ ji + P * Q
+                            jo[k,g,:] = R[k,g] @ ji[k,g,:] + P[k,g] * Q[k,g]
+ 
+ 
+        # Update flux after full red-black pass
         f0 = update_flux(mesh, xs_data, f0, jo, ji, Q)
-
-        # Backward sweep
-        for ix in range(nx-1,-1,-1):
-            for iy in range(ny-1,-1,-1):
-                for iz in range(nz-1,-1,-1):
-                    k = cell_idx(ix,iy,iz,ny,nz)
-                    for g in range(G):
-                        for face in range(6):
-                            nk, nf, bc_t = neighbor(ix,iy,iz, face)
-                            if nk is None:
-                                ji[k,g,face] = 0.0 if bc_t==1 else jo[k,g,face]
-                            else:
-                                ji[k,g,face] = jo[nk,g,nf]
-
-                        jo[k,g,:] = R[k,g] @ ji[k,g,:] + P[k,g] * Q[k,g]
-
-        # Update flux after backward sweep
-        f0 = update_flux(mesh, xs_data, f0, jo, ji, Q)
-
+ 
     return f0, jo, ji
 
 
