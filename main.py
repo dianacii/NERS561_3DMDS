@@ -2,6 +2,7 @@ import argparse
 from dataclasses import dataclass
 import numpy as np
 import scipy.sparse as sp
+from scipy.sparse.linalg import gmres, spilu, LinearOperator
 import re, io, os
 import pandas as pd
 import json
@@ -41,7 +42,7 @@ class MaterialXS:
         """
         Total XS for each group:
             sigma_t[g] = sigma_a[g] + sum_{all g'} sigma_s[g, g']
-            a_ii = Sigma_t - (D_tilde_{i+1/2} + D_tilde_{i-1/2})
+            a_ii = Sigma_t + (D_tilde_{i+1/2} + D_tilde_{i-1/2})
         """
         return self.sigma_a + self.sigma_s.sum(axis=1)
 
@@ -284,7 +285,7 @@ def assemble_A(mesh, xs_data, variables):
                     D_i = xs.D[g]
 
                     # Diagonal: sigma_t * V
-                    # a_ii = Sigma_t - (D_tilde sums)
+                    # a_ii = Sigma_t + (D_tilde sums)
                     # The D_tilde terms are added below in the neighbor loop
                     A[row, row] += xs.sigma_t[g] * V
 
@@ -398,7 +399,7 @@ def compute_source(mesh, xs_data, phi, k_guess=1.0): # Source vector b = Q
 # Finite Difference Method, solved with power iteration
 # =============================================================================
 
-def power_iteration(A, mesh, xs_data, phi_guess, 
+def power_iteration(A, mesh, xs_data, phi_guess,
                     k_guess=1.0, k_tol=1e-6, max_iter=500):
     """
     Power iteration to solve A * phi = b, where b depends on phi through the fission source term.
@@ -406,6 +407,10 @@ def power_iteration(A, mesh, xs_data, phi_guess,
     - A = M, the migration matrix (removal and diffusion)
     - b = Q, the source term includying fission and inscattering from other groups.
     """
+    # Build ILU preconditioner once — avoids full LU fill-in each solve
+    ilu = spilu(A.tocsc(), fill_factor=10)
+    M   = LinearOperator(A.shape, ilu.solve)
+
     # Initial guess
     phi_l = phi_guess   # phi_{l}
     k_l = k_guess       # k_{l}
@@ -416,8 +421,10 @@ def power_iteration(A, mesh, xs_data, phi_guess,
         # Update source term b with new flux guess
         b, F_l = compute_source(mesh, xs_data, phi_l, k_l)
 
-        # Solve A * phi_new = b
-        phi_l_1 = sp.linalg.spsolve(A, b) # phi_{l+1}
+        # Solve A * phi_new = b with GMRES + ILU preconditioner
+        phi_l_1, info = gmres(A, b, M=M, rtol=1e-8)
+        if info != 0:
+            print(f"  WARNING: GMRES did not converge at iter {i+1} (info={info})")
 
         # Update k estimate
         _, F_l_1 = compute_source(mesh, xs_data, phi_l_1, k_l) # F_{l+1}

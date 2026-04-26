@@ -3,7 +3,7 @@
  #      3D Multigroup Nodal Diffusion Solver
  # ---------------------------------------------------
 
-XS_LIBRARY "ANLB_p11/ANLBH_p11_xs_lib.csv"
+XS_LIBRARY "xs_libraries/ANLBH_p11_xs_lib.csv"
 
 # ----------------------------------------------------
 BEGIN GEOMETRY
