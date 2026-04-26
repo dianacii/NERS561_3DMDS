@@ -250,49 +250,42 @@ def compute_source(mesh, xs_data, f0, fs, keff):
 # =============================================================================
 
 def update_flux(mesh, xs_data, f0, jo, ji, Q):
-    """
-    Update node-averaged flux from neutron balance:
-        sigma_r * f0[k,g] = Q[k,g] + (net incoming current) / h
-
-    Net incoming = sum over all 6 faces of (ji - jo) * A_face / V
-    """
     nx, ny, nz = mesh.material.shape
     G = next(iter(xs_data.values())).G
+    N = nx*ny*nz
 
-    f0_new = f0.copy()
+    # Build sigma_r and node dimensions arrays (vectorized)
+    sigr = np.zeros((N, G))
+    hx_arr = np.zeros(N)
+    hy_arr = np.zeros(N)
+    hz_arr = np.zeros(N)
 
     for ix in range(nx):
         for iy in range(ny):
             for iz in range(nz):
-                k   = cell_idx(ix, iy, iz, ny, nz)
-                xs  = xs_data[int(mesh.material[ix, iy, iz])]
-                hx  = mesh.dx[ix]
-                hy  = mesh.dy[iy]
-                hz  = mesh.dz[iz]
+                k  = cell_idx(ix, iy, iz, ny, nz)
+                xs = xs_data[int(mesh.material[ix, iy, iz])]
+                sigr[k, :] = xs.sigma_r
+                hx_arr[k]  = mesh.dx[ix]
+                hy_arr[k]  = mesh.dy[iy]
+                hz_arr[k]  = mesh.dz[iz]
 
-                for g in range(G):
-                    if xs.sigma_r[g] < 1e-20:
-                        continue
+    # Compute L0 for all nodes and groups at once
+    L0x = (jo[:,:,0] - ji[:,:,0]) + (jo[:,:,1] - ji[:,:,1])  # (N,G)
+    L0y = (jo[:,:,2] - ji[:,:,2]) + (jo[:,:,3] - ji[:,:,3])
+    L0z = (jo[:,:,4] - ji[:,:,4]) + (jo[:,:,5] - ji[:,:,5])
 
-                    # Net leakage in per unit volume
-                    # Face areas: X faces = hy*hz, Y faces = hx*hz, Z faces = hx*hy
-                    # (ji - jo) positive = net gain for this node
-                    net = ((ji[k,g,0] - jo[k,g,0]) * hy*hz / (hx*hy*hz) +
-                           (ji[k,g,1] - jo[k,g,1]) * hy*hz / (hx*hy*hz) +
-                           (ji[k,g,2] - jo[k,g,2]) * hx*hz / (hx*hy*hz) +
-                           (ji[k,g,3] - jo[k,g,3]) * hx*hz / (hx*hy*hz) +
-                           (ji[k,g,4] - jo[k,g,4]) * hx*hy / (hx*hy*hz) +
-                           (ji[k,g,5] - jo[k,g,5]) * hx*hy / (hx*hy*hz))
+    # Neutron balance: phi = (Q - L0x/hx - L0y/hy - L0z/hz) / sigr
+    hx_arr = hx_arr[:,np.newaxis]  # (N,1) for broadcasting
+    hy_arr = hy_arr[:,np.newaxis]
+    hz_arr = hz_arr[:,np.newaxis]
 
-                    # Simplifies to: net = (ji-jo)/h for each face pair
-                    net_simple = ((ji[k,g,0]-jo[k,g,0] + ji[k,g,1]-jo[k,g,1])/hx +
-                                  (ji[k,g,2]-jo[k,g,2] + ji[k,g,3]-jo[k,g,3])/hy +
-                                  (ji[k,g,4]-jo[k,g,4] + ji[k,g,5]-jo[k,g,5])/hz)
+    phi_new = (Q - L0x/hx_arr - L0y/hy_arr - L0z/hz_arr) / sigr
 
-                    phi_new = (Q[k, g] + net_simple) / xs.sigma_r[g]
-
-                    if phi_new > 0:
-                        f0_new[k, g] = phi_new
+    # Only update where result is positive and sigr > 0
+    valid = (sigr > 1e-20) & (phi_new > 0)
+    f0_new = f0.copy()
+    f0_new[valid] = phi_new[valid]
 
     return f0_new
 
