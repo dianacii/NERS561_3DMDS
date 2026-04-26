@@ -502,9 +502,14 @@ if __name__ == "__main__":
     G = next(iter(xs_data.values())).G
     print(f"XS: {len(xs_data)} materials, {G} groups")
     print("="*50)
-
+    
+    import time
+    start = time.time()
     f0, keff = nem_power_iteration(mesh, xs_data, variables)
+    elapsed = time.time() - start
+    
     print(f"\nFinal k_eff = {keff:.6f}")
+    print(f"Solve time: {elapsed:.4f} seconds")
     print(f"FD reference  (18x18x19):  ~1.027463")
     print(f"Benchmark ref (9x9x10):  ~1.031760")
     print(f"Benchmark ref (17x17x19):  ~1.02913")
