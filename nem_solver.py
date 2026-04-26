@@ -7,7 +7,7 @@ Algorithm:
        from XS and geometry (done once, before iteration)
     2. Outer power iteration:
        a. Compute source Q (0th moment only for order=2 without TL)
-       b. Inner iteration (forward + backward sweep):
+       b. Inner iteration:
           - Get Ji (incoming) from neighbors' Jo (outgoing) or BC
           - Jo = R @ Ji + P @ Q   (response matrix multiply)
           - Update flux from neutron balance
@@ -340,30 +340,60 @@ def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner=2):
         if face == 5:   # Z-
             if iz == 0:    return None, None, bc['zlo']
             return cell_idx(ix,iy,iz-1,ny,nz), 4, None
- 
+
+    red_nodes   = [(cell_idx(ix,iy,iz,ny,nz), ix, iy, iz)
+               for ix in range(nx) for iy in range(ny) for iz in range(nz)
+               if (ix+iy+iz) % 2 == 0]
+    black_nodes = [(cell_idx(ix,iy,iz,ny,nz), ix, iy, iz)
+               for ix in range(nx) for iy in range(ny) for iz in range(nz)
+               if (ix+iy+iz) % 2 == 1]
+    red_ks   = np.array([k for k,_,_,_ in red_nodes])
+    black_ks = np.array([k for k,_,_,_ in black_nodes])
+
+    N = nx*ny*nz
+    neighbor_idx  = np.full((N, 6), -1, dtype=int)
+    neighbor_face = np.full((N, 6), -1, dtype=int)
+    bc_face       = np.zeros((N, 6), dtype=int)
+    
+    for ix in range(nx):
+        for iy in range(ny):
+            for iz in range(nz):
+                k = cell_idx(ix,iy,iz,ny,nz)
+                for face in range(6):
+                    nk, nf, bc_t = neighbor(ix,iy,iz,face)
+                    if nk is None:
+                        bc_face[k,face] = bc_t
+                    else:
+                        neighbor_idx[k,face]  = nk
+                        neighbor_face[k,face] = nf
+                        
     for _ in range(n_inner):
-        # Red-black sweep: color=0 (red) then color=1 (black)
-        for color in [0, 1]:
-            for ix in range(nx):
-                for iy in range(ny):
-                    for iz in range(nz):
-                        if (ix + iy + iz) % 2 != color:
-                            continue
- 
-                        k = cell_idx(ix,iy,iz,ny,nz)
-                        for g in range(G):
-                            # Get incoming currents from neighbors or BC
-                            for face in range(6):
-                                nk, nf, bc_t = neighbor(ix,iy,iz,face)
-                                if nk is None:
-                                    ji[k,g,face] = 0.0 if bc_t==1 else jo[k,g,face]
-                                else:
-                                    ji[k,g,face] = jo[nk,g,nf]
- 
-                            # Response matrix multiply: jo = R @ ji + P * Q
-                            jo[k,g,:] = R[k,g] @ ji[k,g,:] + P[k,g] * Q[k,g]
- 
- 
+        for nodes, ks in [(red_nodes, red_ks), (black_nodes, black_ks)]:
+            # Vectorized ji update
+            for face in range(6):
+                nks  = neighbor_idx[ks, face]
+                nfs  = neighbor_face[ks, face]
+                bcs  = bc_face[ks, face]
+                is_interior = nks >= 0
+    
+                # Interior nodes: ji = jo of neighbor at opposite face
+                interior = np.where(is_interior)[0]
+                if len(interior) > 0:
+                    ji[ks[interior], :, face] = jo[nks[interior], :, nfs[interior]]
+    
+                # Boundary nodes
+                boundary = np.where(~is_interior)[0]
+                for b in boundary:
+                    k_b = ks[b]
+                    if bcs[b] == 1:   # vacuum
+                        ji[k_b, :, face] = 0.0
+                    else:              # reflective
+                        ji[k_b, :, face] = jo[k_b, :, face]
+    
+            # Vectorized response matrix multiply
+            jo[ks] = (np.einsum('kgij,kgj->kgi', R[ks], ji[ks])
+                      + P[ks] * Q[ks][:,:,np.newaxis])
+    
         # Update flux after full red-black pass
         f0 = update_flux(mesh, xs_data, f0, jo, ji, Q)
  
