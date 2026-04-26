@@ -249,44 +249,14 @@ def compute_source(mesh, xs_data, f0, fs, keff):
 # Update flux from currents
 # =============================================================================
 
-def update_flux(mesh, xs_data, f0, jo, ji, Q):
-    nx, ny, nz = mesh.material.shape
-    G = next(iter(xs_data.values())).G
-    N = nx*ny*nz
-
-    # Build sigma_r and node dimensions arrays (vectorized)
-    sigr = np.zeros((N, G))
-    hx_arr = np.zeros(N)
-    hy_arr = np.zeros(N)
-    hz_arr = np.zeros(N)
-
-    for ix in range(nx):
-        for iy in range(ny):
-            for iz in range(nz):
-                k  = cell_idx(ix, iy, iz, ny, nz)
-                xs = xs_data[int(mesh.material[ix, iy, iz])]
-                sigr[k, :] = xs.sigma_r
-                hx_arr[k]  = mesh.dx[ix]
-                hy_arr[k]  = mesh.dy[iy]
-                hz_arr[k]  = mesh.dz[iz]
-
-    # Compute L0 for all nodes and groups at once
-    L0x = (jo[:,:,0] - ji[:,:,0]) + (jo[:,:,1] - ji[:,:,1])  # (N,G)
-    L0y = (jo[:,:,2] - ji[:,:,2]) + (jo[:,:,3] - ji[:,:,3])
-    L0z = (jo[:,:,4] - ji[:,:,4]) + (jo[:,:,5] - ji[:,:,5])
-
-    # Neutron balance: phi = (Q - L0x/hx - L0y/hy - L0z/hz) / sigr
-    hx_arr = hx_arr[:,np.newaxis]  # (N,1) for broadcasting
-    hy_arr = hy_arr[:,np.newaxis]
-    hz_arr = hz_arr[:,np.newaxis]
-
-    phi_new = (Q - L0x/hx_arr - L0y/hy_arr - L0z/hz_arr) / sigr
-
-    # Only update where result is positive and sigr > 0
-    valid = (sigr > 1e-20) & (phi_new > 0)
+def update_flux(jo, ji, Q, sigr_arr, hx_arr, hy_arr, hz_arr, f0):
+    L0x = (jo[:,:,0]-ji[:,:,0]) + (jo[:,:,1]-ji[:,:,1])
+    L0y = (jo[:,:,2]-ji[:,:,2]) + (jo[:,:,3]-ji[:,:,3])
+    L0z = (jo[:,:,4]-ji[:,:,4]) + (jo[:,:,5]-ji[:,:,5])
+    phi_new = (Q - L0x/hx_arr - L0y/hy_arr - L0z/hz_arr) / sigr_arr
+    valid = (sigr_arr > 1e-20) & (phi_new > 0)
     f0_new = f0.copy()
     f0_new[valid] = phi_new[valid]
-
     return f0_new
 
 
@@ -294,7 +264,8 @@ def update_flux(mesh, xs_data, f0, jo, ji, Q):
 # Inner iteration sweep
 # =============================================================================
 
-def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner=2):
+def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc,
+                sigr_arr, hx_arr, hy_arr, hz_arr, n_inner=2):
     """
     Inner iteration: update Jo using response matrix, then update flux.
  
@@ -388,7 +359,7 @@ def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner=2):
                       + P[ks] * Q[ks][:,:,np.newaxis])
     
         # Update flux after full red-black pass
-        f0 = update_flux(mesh, xs_data, f0, jo, ji, Q)
+        f0 = update_flux(jo, ji, Q, sigr_arr, hx_arr, hy_arr, hz_arr, f0)
  
     return f0, jo, ji
 
@@ -427,6 +398,21 @@ def nem_power_iteration(mesh, xs_data, variables,
     R, P = compute_response_matrices(mesh, xs_data)
     print(f"  R shape: {R.shape}, P shape: {P.shape}")
 
+    # Precompute arrays that don't change during iteration
+    sigr_arr = np.zeros((N, G))
+    hx_arr   = np.zeros((N, 1))
+    hy_arr   = np.zeros((N, 1))
+    hz_arr   = np.zeros((N, 1))
+    for ix in range(nx):
+        for iy in range(ny):
+            for iz in range(nz):
+                k  = cell_idx(ix, iy, iz, ny, nz)
+                xs = xs_data[int(mesh.material[ix, iy, iz])]
+                sigr_arr[k, :] = xs.sigma_r
+                hx_arr[k, 0]   = mesh.dx[ix]
+                hy_arr[k, 0]   = mesh.dy[iy]
+                hz_arr[k, 0]   = mesh.dz[iz]
+                
     # Initialize
     f0 = np.ones((N, G))    # node-averaged flux
     jo = np.ones((N, G, 6)) # outgoing partial currents
@@ -448,7 +434,8 @@ def nem_power_iteration(mesh, xs_data, variables,
 
             # Inner iteration
             f0, jo, ji = inner_sweep(
-                mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner)
+                mesh, xs_data, f0, jo, ji, Q, R, P, bc,
+                sigr_arr, hx_arr, hy_arr, hz_arr, n_inner)
 
         # Update fission source and k
         fs_new, F_new = compute_fission_source(mesh, xs_data, f0)
