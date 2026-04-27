@@ -4,7 +4,12 @@ NERS561 core design final project: implementataion of a 3D Multigroup Nodal Diff
 To run the solvers on ANL Benchmark Problem 11 use the following commands:
 
 ```bash
+# FDM solver
 python fdm.py input_files/ANLB_p11/ANLB_9x9x19.inp
+python fdm.py input_files/ANLB_p11/ANLB_18x18x19.inp
+python fdm.py input_files/ANLB_p11/ANLB_36x36x38.inp
+
+# NEM solver (1 node per assembly only)
 python nem.py input_files/ANLB_p11/ANLB_9x9x19.inp
 ```
 
