@@ -46,6 +46,17 @@ class MaterialXS:
         """
         return self.sigma_a + self.sigma_s.sum(axis=1)
 
+    @property
+    def sigma_r(self):
+        """
+        Removal XS for each group:
+            sigma_r[g] = sigma_a[g] + sum_{g'!=g} sigma_s[g, g']
+        i.e. absorption plus out-scatter (excluding self-scatter).
+        Used in NEM moment balance equations.
+        """
+        out_scatter = self.sigma_s.sum(axis=1) - np.diag(self.sigma_s)
+        return self.sigma_a + out_scatter
+        
 # =============================================================================
 # INPUT PARSING
 # =============================================================================

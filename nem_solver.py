@@ -7,7 +7,7 @@ Algorithm:
        from XS and geometry (done once, before iteration)
     2. Outer power iteration:
        a. Compute source Q (0th moment only for order=2 without TL)
-       b. Inner iteration (forward + backward sweep):
+       b. Inner iteration:
           - Get Ji (incoming) from neighbors' Jo (outgoing) or BC
           - Jo = R @ Ji + P @ Q   (response matrix multiply)
           - Update flux from neutron balance
@@ -249,51 +249,14 @@ def compute_source(mesh, xs_data, f0, fs, keff):
 # Update flux from currents
 # =============================================================================
 
-def update_flux(mesh, xs_data, f0, jo, ji, Q):
-    """
-    Update node-averaged flux from neutron balance:
-        sigma_r * f0[k,g] = Q[k,g] + (net incoming current) / h
-
-    Net incoming = sum over all 6 faces of (ji - jo) * A_face / V
-    """
-    nx, ny, nz = mesh.material.shape
-    G = next(iter(xs_data.values())).G
-
+def update_flux(jo, ji, Q, sigr_arr, hx_arr, hy_arr, hz_arr, f0):
+    L0x = (jo[:,:,0]-ji[:,:,0]) + (jo[:,:,1]-ji[:,:,1])
+    L0y = (jo[:,:,2]-ji[:,:,2]) + (jo[:,:,3]-ji[:,:,3])
+    L0z = (jo[:,:,4]-ji[:,:,4]) + (jo[:,:,5]-ji[:,:,5])
+    phi_new = (Q - L0x/hx_arr - L0y/hy_arr - L0z/hz_arr) / sigr_arr
+    valid = (sigr_arr > 1e-20) & (phi_new > 0)
     f0_new = f0.copy()
-
-    for ix in range(nx):
-        for iy in range(ny):
-            for iz in range(nz):
-                k   = cell_idx(ix, iy, iz, ny, nz)
-                xs  = xs_data[int(mesh.material[ix, iy, iz])]
-                hx  = mesh.dx[ix]
-                hy  = mesh.dy[iy]
-                hz  = mesh.dz[iz]
-
-                for g in range(G):
-                    if xs.sigma_r[g] < 1e-20:
-                        continue
-
-                    # Net leakage in per unit volume
-                    # Face areas: X faces = hy*hz, Y faces = hx*hz, Z faces = hx*hy
-                    # (ji - jo) positive = net gain for this node
-                    net = ((ji[k,g,0] - jo[k,g,0]) * hy*hz / (hx*hy*hz) +
-                           (ji[k,g,1] - jo[k,g,1]) * hy*hz / (hx*hy*hz) +
-                           (ji[k,g,2] - jo[k,g,2]) * hx*hz / (hx*hy*hz) +
-                           (ji[k,g,3] - jo[k,g,3]) * hx*hz / (hx*hy*hz) +
-                           (ji[k,g,4] - jo[k,g,4]) * hx*hy / (hx*hy*hz) +
-                           (ji[k,g,5] - jo[k,g,5]) * hx*hy / (hx*hy*hz))
-
-                    # Simplifies to: net = (ji-jo)/h for each face pair
-                    net_simple = ((ji[k,g,0]-jo[k,g,0] + ji[k,g,1]-jo[k,g,1])/hx +
-                                  (ji[k,g,2]-jo[k,g,2] + ji[k,g,3]-jo[k,g,3])/hy +
-                                  (ji[k,g,4]-jo[k,g,4] + ji[k,g,5]-jo[k,g,5])/hz)
-
-                    phi_new = (Q[k, g] + net_simple) / xs.sigma_r[g]
-
-                    if phi_new > 0:
-                        f0_new[k, g] = phi_new
-
+    f0_new[valid] = phi_new[valid]
     return f0_new
 
 
@@ -301,25 +264,28 @@ def update_flux(mesh, xs_data, f0, jo, ji, Q):
 # Inner iteration sweep
 # =============================================================================
 
-def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner=2):
+def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc,
+                sigr_arr, hx_arr, hy_arr, hz_arr, n_inner=2):
     """
     Inner iteration: update Jo using response matrix, then update flux.
-
-    Forward sweep (k=1..nk) then backward sweep (k=nk..1).
-
+ 
+    Uses red-black (checkerboard) ordering:
+        - Color each node by (ix+iy+iz) % 2
+        - Update all red nodes (color=0) first, then all black nodes (color=1)
+        - Red nodes only have black neighbors (unchanged this pass) so all
+          incoming currents are from the previous sweep, no ordering dependency
+        - Then black nodes use freshly updated red neighbors
+ 
     jo = R @ ji + P * Q0
-
-    bc dict: {face: bc_type} where face is 'xlo','xhi','ylo','yhi','zlo','zhi'
+ 
+    bc dict: {face: bc_type}
              bc_type: 1=vacuum, 2=reflective
     """
     nx, ny, nz = mesh.material.shape
     G = next(iter(xs_data.values())).G
-    N = nx*ny*nz
-
-    # Build neighbor lookup
+ 
+    # Neighbor lookup: returns (neighbor_k, neighbor_face, bc_type)
     def neighbor(ix, iy, iz, face):
-        """Return (neighbor_k, neighbor_face, bc_type) for a given face."""
-        # face: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-
         if face == 0:   # X+
             if ix == nx-1: return None, None, bc['xhi']
             return cell_idx(ix+1,iy,iz,ny,nz), 1, None
@@ -339,45 +305,62 @@ def inner_sweep(mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner=2):
             if iz == 0:    return None, None, bc['zlo']
             return cell_idx(ix,iy,iz-1,ny,nz), 4, None
 
+    red_nodes   = [(cell_idx(ix,iy,iz,ny,nz), ix, iy, iz)
+               for ix in range(nx) for iy in range(ny) for iz in range(nz)
+               if (ix+iy+iz) % 2 == 0]
+    black_nodes = [(cell_idx(ix,iy,iz,ny,nz), ix, iy, iz)
+               for ix in range(nx) for iy in range(ny) for iz in range(nz)
+               if (ix+iy+iz) % 2 == 1]
+    red_ks   = np.array([k for k,_,_,_ in red_nodes])
+    black_ks = np.array([k for k,_,_,_ in black_nodes])
+
+    N = nx*ny*nz
+    neighbor_idx  = np.full((N, 6), -1, dtype=int)
+    neighbor_face = np.full((N, 6), -1, dtype=int)
+    bc_face       = np.zeros((N, 6), dtype=int)
+    
+    for ix in range(nx):
+        for iy in range(ny):
+            for iz in range(nz):
+                k = cell_idx(ix,iy,iz,ny,nz)
+                for face in range(6):
+                    nk, nf, bc_t = neighbor(ix,iy,iz,face)
+                    if nk is None:
+                        bc_face[k,face] = bc_t
+                    else:
+                        neighbor_idx[k,face]  = nk
+                        neighbor_face[k,face] = nf
+                        
     for _ in range(n_inner):
-        # Forward sweep
-        for ix in range(nx):
-            for iy in range(ny):
-                for iz in range(nz):
-                    k = cell_idx(ix,iy,iz,ny,nz)
-                    for g in range(G):
-                        # Get incoming currents from all 6 neighbors
-                        for face in range(6):
-                            nk, nf, bc_t = neighbor(ix,iy,iz, face)
-                            if nk is None:
-                                ji[k,g,face] = 0.0 if bc_t==1 else jo[k,g,face]
-                            else:
-                                ji[k,g,face] = jo[nk,g,nf]
-
-                        # Response matrix: jo = R @ ji + P * Q0
-                        jo[k,g,:] = R[k,g] @ ji[k,g,:] + P[k,g] * Q[k,g]
-
-        # Update flux after forward sweep
-        f0 = update_flux(mesh, xs_data, f0, jo, ji, Q)
-
-        # Backward sweep
-        for ix in range(nx-1,-1,-1):
-            for iy in range(ny-1,-1,-1):
-                for iz in range(nz-1,-1,-1):
-                    k = cell_idx(ix,iy,iz,ny,nz)
-                    for g in range(G):
-                        for face in range(6):
-                            nk, nf, bc_t = neighbor(ix,iy,iz, face)
-                            if nk is None:
-                                ji[k,g,face] = 0.0 if bc_t==1 else jo[k,g,face]
-                            else:
-                                ji[k,g,face] = jo[nk,g,nf]
-
-                        jo[k,g,:] = R[k,g] @ ji[k,g,:] + P[k,g] * Q[k,g]
-
-        # Update flux after backward sweep
-        f0 = update_flux(mesh, xs_data, f0, jo, ji, Q)
-
+        for nodes, ks in [(red_nodes, red_ks), (black_nodes, black_ks)]:
+            # Vectorized ji update
+            for face in range(6):
+                nks  = neighbor_idx[ks, face]
+                nfs  = neighbor_face[ks, face]
+                bcs  = bc_face[ks, face]
+                is_interior = nks >= 0
+    
+                # Interior nodes: ji = jo of neighbor at opposite face
+                interior = np.where(is_interior)[0]
+                if len(interior) > 0:
+                    ji[ks[interior], :, face] = jo[nks[interior], :, nfs[interior]]
+    
+                # Boundary nodes
+                boundary = np.where(~is_interior)[0]
+                for b in boundary:
+                    k_b = ks[b]
+                    if bcs[b] == 1:   # vacuum
+                        ji[k_b, :, face] = 0.0
+                    else:              # reflective
+                        ji[k_b, :, face] = jo[k_b, :, face]
+    
+            # Vectorized response matrix multiply
+            jo[ks] = (np.einsum('kgij,kgj->kgi', R[ks], ji[ks])
+                      + P[ks] * Q[ks][:,:,np.newaxis])
+    
+        # Update flux after full red-black pass
+        f0 = update_flux(jo, ji, Q, sigr_arr, hx_arr, hy_arr, hz_arr, f0)
+ 
     return f0, jo, ji
 
 
@@ -415,6 +398,21 @@ def nem_power_iteration(mesh, xs_data, variables,
     R, P = compute_response_matrices(mesh, xs_data)
     print(f"  R shape: {R.shape}, P shape: {P.shape}")
 
+    # Precompute arrays that don't change during iteration
+    sigr_arr = np.zeros((N, G))
+    hx_arr   = np.zeros((N, 1))
+    hy_arr   = np.zeros((N, 1))
+    hz_arr   = np.zeros((N, 1))
+    for ix in range(nx):
+        for iy in range(ny):
+            for iz in range(nz):
+                k  = cell_idx(ix, iy, iz, ny, nz)
+                xs = xs_data[int(mesh.material[ix, iy, iz])]
+                sigr_arr[k, :] = xs.sigma_r
+                hx_arr[k, 0]   = mesh.dx[ix]
+                hy_arr[k, 0]   = mesh.dy[iy]
+                hz_arr[k, 0]   = mesh.dz[iz]
+                
     # Initialize
     f0 = np.ones((N, G))    # node-averaged flux
     jo = np.ones((N, G, 6)) # outgoing partial currents
@@ -436,7 +434,8 @@ def nem_power_iteration(mesh, xs_data, variables,
 
             # Inner iteration
             f0, jo, ji = inner_sweep(
-                mesh, xs_data, f0, jo, ji, Q, R, P, bc, n_inner)
+                mesh, xs_data, f0, jo, ji, Q, R, P, bc,
+                sigr_arr, hx_arr, hy_arr, hz_arr, n_inner)
 
         # Update fission source and k
         fs_new, F_new = compute_fission_source(mesh, xs_data, f0)
@@ -488,7 +487,7 @@ if __name__ == "__main__":
     mat_names = parse_materials(input_data)
     mesh      = build_mesh(variables, layers)
     nx,ny,nz  = mesh.material.shape
-    print(f"Mesh: {nx} x {ny} x {nz} nodes ({nx*ny*nz} total)")
+    print(f"Mesh: {nx} x {ny} x {nz} nodes ({nx*ny*nz} per group)")
 
     xs_library = load_xs_library(variables["XS_LIBRARY"])
     xs_data = {}
@@ -503,9 +502,16 @@ if __name__ == "__main__":
     G = next(iter(xs_data.values())).G
     print(f"XS: {len(xs_data)} materials, {G} groups")
     print("="*50)
-
+    
+    import time
+    start = time.time()
     f0, keff = nem_power_iteration(mesh, xs_data, variables)
+    elapsed = time.time() - start
+    
     print(f"\nFinal k_eff = {keff:.6f}")
+    print(f"Solve time: {elapsed:.4f} seconds")
+    print(f"Mesh: {nx} x {ny} x {nz} nodes ({nx*ny*nz} per group)")
+    print(f"NEM ANL Problem 11 Benchmark ref (5054 Unknowns per group):  ~1.02911")
     print(f"FD reference  (18x18x19):  ~1.027463")
-    print(f"Benchmark ref (9x9x10):  ~1.031760")
-    print(f"Benchmark ref (17x17x19):  ~1.02913")
+    print(f"FD ANL Problem 11 Benchmark ref (9x9x10):  ~1.031760")
+    print(f"FD ANL Problem 11 Benchmark ref (17x17x19):  ~1.02913")
