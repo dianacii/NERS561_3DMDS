@@ -322,7 +322,7 @@ def assemble_A(mesh, xs_data, variables):
                             if bc[face] == 'v':
                                 # Vacuum BC: adds D/(0.5*h) * A_face to diagonal
                                 A[row, row] += (D_i / (0.5 * h[direction])) * A_face
-                                # Benchmark-specified BC
+                                # Benchmark-specified BC (USING THIS BC CHANGES ANSWERS BY ABOUT 9 pcm, SO THIS IS NOT A NOTICEABLE SOURCE OF ERROR)
                                 #coeff = 0.4692 / (1.0 + (0.4692 * h[direction]) / (2.0 * D_i))
                                 #A[row, row] += coeff * A_face
                                 # Reflective BC: zero net current, no contribution
