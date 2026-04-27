@@ -31,7 +31,7 @@ Boundary conditions:
 
 import numpy as np
 import argparse
-from main import (Mesh, MaterialXS, cell_idx,
+from fdm import (Mesh, MaterialXS, cell_idx,
                   build_mesh, parse_input, parse_layers,
                   parse_materials, load_xs_library, clean_txt)
 

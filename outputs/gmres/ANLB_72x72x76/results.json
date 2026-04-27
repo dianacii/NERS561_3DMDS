@@ -1,0 +1,13 @@
+{
+    "file_name": "ANLB_72x72x76",
+    "mesh_shape": [
+        72,
+        72,
+        76
+    ],
+    "num_iterations": 355,
+    "k": 1.0272995507326421,
+    "peak_to_avg": 2.689236559629906,
+    "max_power_density": 111.24787509739264,
+    "run_time": 2856.9667789936066
+}

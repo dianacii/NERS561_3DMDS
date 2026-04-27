@@ -1,0 +1,13 @@
+{
+    "file_name": "ANLB_9x9x19",
+    "mesh_shape": [
+        9,
+        9,
+        19
+    ],
+    "num_iterations": 357,
+    "k": 1.0302564569806898,
+    "peak_to_avg": 2.5543126245419097,
+    "max_power_density": 27050.589433673347,
+    "run_time": 3.921212673187256
+}
