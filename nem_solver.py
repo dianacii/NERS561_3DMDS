@@ -1,5 +1,5 @@
 """
-nem_solver.py — 1-node NEM Response Matrix Solver
+nem.py - 1-node NEM Response Matrix Solver
 ===================================================
 
 Algorithm:
