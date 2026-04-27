@@ -487,7 +487,7 @@ if __name__ == "__main__":
     mat_names = parse_materials(input_data)
     mesh      = build_mesh(variables, layers)
     nx,ny,nz  = mesh.material.shape
-    print(f"Mesh: {nx} x {ny} x {nz} nodes ({nx*ny*nz} total)")
+    print(f"Mesh: {nx} x {ny} x {nz} nodes ({nx*ny*nz} per group)")
 
     xs_library = load_xs_library(variables["XS_LIBRARY"])
     xs_data = {}
@@ -510,6 +510,8 @@ if __name__ == "__main__":
     
     print(f"\nFinal k_eff = {keff:.6f}")
     print(f"Solve time: {elapsed:.4f} seconds")
+    print(f"Mesh: {nx} x {ny} x {nz} nodes ({nx*ny*nz} per group)")
+    print(f"NEM ANL Problem 11 Benchmark ref (5054 Unknowns per group):  ~1.02911")
     print(f"FD reference  (18x18x19):  ~1.027463")
-    print(f"Benchmark ref (9x9x10):  ~1.031760")
-    print(f"Benchmark ref (17x17x19):  ~1.02913")
+    print(f"FD ANL Problem 11 Benchmark ref (9x9x10):  ~1.031760")
+    print(f"FD ANL Problem 11 Benchmark ref (17x17x19):  ~1.02913")
