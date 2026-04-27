@@ -1,6 +1,9 @@
 # NERS561_3DMDS
 NERS561 core design final project: implementataion of a 3D Multigroup Nodal Diffusion Solver
 
+To run use the solvers on ANL Benchmark Problem 11 use the following command
+python <solver>.py input_files\ANLB_p11\ANLB_<mesh_size>.inp
+
 # OVERVIEW:
 3D Multigroup Nodal Diffusion Solver  -- {simulate3}
 - Implement 4th-Order NEM (multigroup)
